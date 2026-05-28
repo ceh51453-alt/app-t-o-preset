@@ -251,8 +251,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
         });
 
-        // Parse regex_scripts if embedded
-        const rawRegexes = Array.isArray(pObj.regex_scripts) ? pObj.regex_scripts : [];
+        // Parse regex_scripts if embedded (check both root and extensions.regex_scripts)
+        const ext = pObj.extensions as Record<string, unknown> | undefined;
+        const rawRegexes = Array.isArray(pObj.regex_scripts) ? pObj.regex_scripts
+          : (ext && Array.isArray(ext.regex_scripts)) ? ext.regex_scripts
+          : [];
         const regexes: RegexScript[] = rawRegexes.map((item: unknown) => {
           const r = (item || {}) as Record<string, unknown>;
           return {

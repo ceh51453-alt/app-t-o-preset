@@ -55,7 +55,7 @@ function getFileTypeLabel(type: string): string {
 }
 
 export const StepExport: React.FC = () => {
-  const { activeProject, addToast, importProjectFromFile } = useApp();
+  const { activeProject, addToast, addPromptBlock, addRegexScript, updatePresetParams } = useApp();
   
   // Tab within Export step: 'preset' or index of regex
   const [activeTab, setActiveTab] = useState<'preset' | number>('preset');
@@ -176,7 +176,119 @@ export const StepExport: React.FC = () => {
 
   const handleImportConfirm = () => {
     if (!importedFile) return;
-    importProjectFromFile(importedFile.data, importedFile.fileName);
+
+    const data = importedFile.data;
+    let addedPrompts = 0;
+    let addedRegexes = 0;
+
+    if (importedFile.fileType === 'preset') {
+      const pObj = data as Record<string, unknown>;
+
+      // Add prompts from file
+      if (Array.isArray(pObj.prompts)) {
+        (pObj.prompts as Record<string, unknown>[]).forEach((p) => {
+          addPromptBlock({
+            name: String(p.name || 'Prompt Block'),
+            identifier: String(p.identifier || p.name || 'prompt-' + Math.random().toString(36).substring(7)),
+            role: (p.role === 'user' || p.role === 'assistant' ? p.role : 'system') as 'system' | 'user' | 'assistant',
+            system_prompt: typeof p.system_prompt === 'boolean' ? p.system_prompt : true,
+            content: String(p.content || ''),
+            enabled: typeof p.enabled === 'boolean' ? p.enabled : true,
+            injection_position: typeof p.injection_position === 'number' ? p.injection_position : 0,
+            injection_depth: typeof p.injection_depth === 'number' ? p.injection_depth : 4,
+            injection_order: typeof p.injection_order === 'number' ? p.injection_order : 100,
+            forbid_overrides: typeof p.forbid_overrides === 'boolean' ? p.forbid_overrides : false,
+          });
+          addedPrompts++;
+        });
+      }
+
+      // Add regex_scripts from preset (check both root and extensions.regex_scripts)
+      const ext = pObj.extensions as Record<string, unknown> | undefined;
+      const rawRegexScripts = Array.isArray(pObj.regex_scripts) ? pObj.regex_scripts
+        : (ext && Array.isArray(ext.regex_scripts)) ? ext.regex_scripts
+        : [];
+      if (rawRegexScripts.length > 0) {
+        (rawRegexScripts as Record<string, unknown>[]).forEach((r) => {
+          addRegexScript({
+            scriptName: String(r.scriptName || 'Regex Script'),
+            findRegex: String(r.findRegex || ''),
+            replaceString: String(r.replaceString || ''),
+            trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+            placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+            disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+            markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+            promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+            runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+            substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+            minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+            maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+            id: String(r.id || undefined),
+          });
+          addedRegexes++;
+        });
+      }
+
+      // Optionally update preset parameters (non-prompt fields)
+      const paramUpdates: Record<string, unknown> = {};
+      const paramKeys = ['temperature', 'frequency_penalty', 'presence_penalty', 'top_p', 'top_k', 'top_a', 'min_p',
+        'repetition_penalty', 'openai_max_context', 'openai_max_tokens', 'wrap_in_quotes', 'names_behavior',
+        'send_if_empty', 'impersonation_prompt', 'new_chat_prompt', 'new_group_chat_prompt',
+        'new_example_chat_prompt', 'continue_nudge_prompt', 'bias_preset_selected', 'max_context_unlocked',
+        'wi_format', 'scenario_format', 'personality_format', 'group_nudge_prompt', 'stream_openai'];
+      paramKeys.forEach(key => {
+        if (key in pObj) paramUpdates[key] = pObj[key];
+      });
+      if (Object.keys(paramUpdates).length > 0) {
+        updatePresetParams(paramUpdates as any);
+      }
+
+      addToast(`Đã thêm ${addedPrompts} prompt blocks${addedRegexes > 0 ? ` và ${addedRegexes} regex scripts` : ''} vào dự án!`, 'success');
+
+    } else if (importedFile.fileType === 'regex') {
+      const r = data as Record<string, unknown>;
+      addRegexScript({
+        scriptName: String(r.scriptName || 'Regex Script'),
+        findRegex: String(r.findRegex || ''),
+        replaceString: String(r.replaceString || ''),
+        trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+        placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+        disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+        markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+        promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+        runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+        substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+        minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+        maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+        id: String(r.id || undefined),
+      });
+      addToast(`Đã thêm Regex Script vào dự án!`, 'success');
+
+    } else if (importedFile.fileType === 'regex_array') {
+      const arr = data as Record<string, unknown>[];
+      arr.forEach((r) => {
+        addRegexScript({
+          scriptName: String(r.scriptName || 'Regex Script'),
+          findRegex: String(r.findRegex || ''),
+          replaceString: String(r.replaceString || ''),
+          trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+          placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+          disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+          markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+          promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+          runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+          substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+          minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+          maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+          id: String(r.id || undefined),
+        });
+      });
+      addToast(`Đã thêm ${arr.length} Regex Scripts vào dự án!`, 'success');
+
+    } else {
+      addToast('Không nhận diện được loại dữ liệu trong file.', 'error');
+    }
+
     setImportedFile(null);
     setShowPreview(false);
   };
@@ -261,26 +373,35 @@ export const StepExport: React.FC = () => {
 
               {/* Preview Summary */}
               <div className="px-4 py-3 space-y-2">
-                {importedFile.fileType === 'preset' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="p-2.5 bg-gray-950/50 rounded-lg border border-theme-border/40">
-                      <span className="block text-[9px] text-gray-500 uppercase font-bold">Khối Prompts</span>
-                      <span className="block text-xs font-bold text-purple-400 mt-0.5">
-                        {Array.isArray((importedFile.data as Record<string, unknown>)?.prompts) 
-                          ? ((importedFile.data as Record<string, unknown>).prompts as unknown[]).length 
-                          : 0} blocks
-                      </span>
+                {importedFile.fileType === 'preset' && (() => {
+                  const pObj = importedFile.data as Record<string, unknown>;
+                  const ext = pObj.extensions as Record<string, unknown> | undefined;
+                  const regexCount = Array.isArray(pObj.regex_scripts) ? (pObj.regex_scripts as unknown[]).length
+                    : (ext && Array.isArray(ext.regex_scripts)) ? (ext.regex_scripts as unknown[]).length
+                    : 0;
+                  return (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="p-2.5 bg-gray-950/50 rounded-lg border border-theme-border/40">
+                        <span className="block text-[9px] text-gray-500 uppercase font-bold">Khối Prompts</span>
+                        <span className="block text-xs font-bold text-purple-400 mt-0.5">
+                          {Array.isArray(pObj.prompts) ? (pObj.prompts as unknown[]).length : 0} blocks
+                        </span>
+                      </div>
+                      <div className="p-2.5 bg-gray-950/50 rounded-lg border border-theme-border/40">
+                        <span className="block text-[9px] text-gray-500 uppercase font-bold">Regex Scripts</span>
+                        <span className="block text-xs font-bold text-cyan-400 mt-0.5">
+                          {regexCount} scripts
+                        </span>
+                      </div>
+                      <div className="p-2.5 bg-gray-950/50 rounded-lg border border-theme-border/40">
+                        <span className="block text-[9px] text-gray-500 uppercase font-bold">Temperature</span>
+                        <span className="block text-xs font-bold text-green-400 mt-0.5">
+                          {typeof pObj.temperature === 'number' ? String(pObj.temperature) : 'N/A'}
+                        </span>
+                      </div>
                     </div>
-                    <div className="p-2.5 bg-gray-950/50 rounded-lg border border-theme-border/40">
-                      <span className="block text-[9px] text-gray-500 uppercase font-bold">Temperature</span>
-                      <span className="block text-xs font-bold text-green-400 mt-0.5">
-                        {typeof (importedFile.data as Record<string, unknown>)?.temperature === 'number' 
-                          ? String((importedFile.data as Record<string, unknown>).temperature) 
-                          : 'N/A'}
-                      </span>
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
                 {importedFile.fileType === 'regex_array' && (
                   <div className="p-2.5 bg-gray-950/50 rounded-lg border border-theme-border/40">
                     <span className="block text-[9px] text-gray-500 uppercase font-bold">Số Regex Scripts</span>
@@ -333,10 +454,10 @@ export const StepExport: React.FC = () => {
                 >
                   <ArrowDownToLine size={13} />
                   {importedFile.fileType === 'preset' 
-                    ? 'Tạo Dự Án Từ Preset' 
+                    ? 'Thêm Prompts & Regex Vào Dự Án' 
                     : importedFile.fileType === 'regex' || importedFile.fileType === 'regex_array'
-                      ? 'Tạo Dự Án Từ Regex'
-                      : 'Tạo Dự Án Mới'
+                      ? 'Thêm Regex Vào Dự Án'
+                      : 'Nhập Vào Dự Án'
                   }
                 </button>
               </div>
