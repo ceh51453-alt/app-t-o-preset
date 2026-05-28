@@ -206,6 +206,178 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newProj;
   };
 
+  const importProjectFromFile = (fileData: unknown, fileName: string) => {
+    if (!fileData || typeof fileData !== 'object') {
+      addToast("Dữ liệu file không hợp lệ!", "error");
+      return;
+    }
+
+    try {
+      const pObj = fileData as Record<string, unknown>;
+
+      // Detect if this is a preset (has prompts or temperature)
+      const isPreset = ('prompts' in pObj && Array.isArray(pObj.prompts)) ||
+                       ('temperature' in pObj && ('top_p' in pObj || 'impersonation_prompt' in pObj));
+      // Detect if this is a single regex
+      const isRegex = 'findRegex' in pObj && 'replaceString' in pObj;
+      // Detect array of regexes
+      const isRegexArray = Array.isArray(fileData) && (fileData as unknown[]).length > 0 &&
+        (fileData as unknown[]).every((item: unknown) => item && typeof item === 'object' && ('findRegex' in (item as Record<string, unknown>)));
+
+      // Derive project name from file or preset metadata
+      const baseName = fileName.replace(/\.json$/i, '');
+      const presetName = typeof pObj.name === 'string' ? pObj.name 
+        : typeof pObj.SPreset === 'string' ? pObj.SPreset 
+        : typeof (pObj.extensions as Record<string, unknown>)?.SPreset === 'string' ? String((pObj.extensions as Record<string, unknown>).SPreset)
+        : baseName;
+
+      if (isPreset) {
+        // Parse prompts
+        const rawPrompts = Array.isArray(pObj.prompts) ? pObj.prompts : [];
+        const prompts = rawPrompts.map((item: unknown) => {
+          const p = (item || {}) as Record<string, unknown>;
+          return {
+            identifier: String(p.identifier || p.name || 'prompt-' + generateRandomId()),
+            name: String(p.name || "Prompt Block"),
+            system_prompt: typeof p.system_prompt === 'boolean' ? p.system_prompt : true,
+            role: (p.role === 'user' || p.role === 'assistant' ? p.role : 'system') as 'system' | 'user' | 'assistant',
+            content: String(p.content || ""),
+            enabled: typeof p.enabled === 'boolean' ? p.enabled : true,
+            injection_position: typeof p.injection_position === 'number' ? p.injection_position : 0,
+            injection_depth: typeof p.injection_depth === 'number' ? p.injection_depth : 4,
+            injection_order: typeof p.injection_order === 'number' ? p.injection_order : 100,
+            forbid_overrides: typeof p.forbid_overrides === 'boolean' ? p.forbid_overrides : false,
+            marker: typeof p.marker === 'boolean' ? p.marker : false,
+          };
+        });
+
+        // Parse regex_scripts if embedded
+        const rawRegexes = Array.isArray(pObj.regex_scripts) ? pObj.regex_scripts : [];
+        const regexes: RegexScript[] = rawRegexes.map((item: unknown) => {
+          const r = (item || {}) as Record<string, unknown>;
+          return {
+            id: String(r.id || 'reg-' + generateRandomId()),
+            scriptName: String(r.scriptName || "Regex Script"),
+            findRegex: String(r.findRegex || ""),
+            replaceString: String(r.replaceString || ""),
+            trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+            placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+            disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+            markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+            promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+            runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+            substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+            minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+            maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+          };
+        });
+
+        const mergedPreset: SillyTavernPreset = {
+          temperature: typeof pObj.temperature === 'number' ? pObj.temperature : DEFAULT_PRESET_PARAMS.temperature,
+          frequency_penalty: typeof pObj.frequency_penalty === 'number' ? pObj.frequency_penalty : DEFAULT_PRESET_PARAMS.frequency_penalty,
+          presence_penalty: typeof pObj.presence_penalty === 'number' ? pObj.presence_penalty : DEFAULT_PRESET_PARAMS.presence_penalty,
+          top_p: typeof pObj.top_p === 'number' ? pObj.top_p : DEFAULT_PRESET_PARAMS.top_p,
+          top_k: typeof pObj.top_k === 'number' ? pObj.top_k : DEFAULT_PRESET_PARAMS.top_k,
+          top_a: typeof pObj.top_a === 'number' ? pObj.top_a : DEFAULT_PRESET_PARAMS.top_a,
+          min_p: typeof pObj.min_p === 'number' ? pObj.min_p : DEFAULT_PRESET_PARAMS.min_p,
+          repetition_penalty: typeof pObj.repetition_penalty === 'number' ? pObj.repetition_penalty : DEFAULT_PRESET_PARAMS.repetition_penalty,
+          openai_max_context: typeof pObj.openai_max_context === 'number' ? pObj.openai_max_context : DEFAULT_PRESET_PARAMS.openai_max_context,
+          openai_max_tokens: typeof pObj.openai_max_tokens === 'number' ? pObj.openai_max_tokens : DEFAULT_PRESET_PARAMS.openai_max_tokens,
+          wrap_in_quotes: typeof pObj.wrap_in_quotes === 'boolean' ? pObj.wrap_in_quotes : DEFAULT_PRESET_PARAMS.wrap_in_quotes,
+          names_behavior: typeof pObj.names_behavior === 'number' ? pObj.names_behavior : DEFAULT_PRESET_PARAMS.names_behavior,
+          send_if_empty: typeof pObj.send_if_empty === 'string' ? pObj.send_if_empty : DEFAULT_PRESET_PARAMS.send_if_empty,
+          impersonation_prompt: typeof pObj.impersonation_prompt === 'string' ? pObj.impersonation_prompt : DEFAULT_PRESET_PARAMS.impersonation_prompt,
+          new_chat_prompt: typeof pObj.new_chat_prompt === 'string' ? pObj.new_chat_prompt : DEFAULT_PRESET_PARAMS.new_chat_prompt,
+          new_group_chat_prompt: typeof pObj.new_group_chat_prompt === 'string' ? pObj.new_group_chat_prompt : DEFAULT_PRESET_PARAMS.new_group_chat_prompt,
+          new_example_chat_prompt: typeof pObj.new_example_chat_prompt === 'string' ? pObj.new_example_chat_prompt : DEFAULT_PRESET_PARAMS.new_example_chat_prompt,
+          continue_nudge_prompt: typeof pObj.continue_nudge_prompt === 'string' ? pObj.continue_nudge_prompt : DEFAULT_PRESET_PARAMS.continue_nudge_prompt,
+          bias_preset_selected: typeof pObj.bias_preset_selected === 'string' ? pObj.bias_preset_selected : DEFAULT_PRESET_PARAMS.bias_preset_selected,
+          max_context_unlocked: typeof pObj.max_context_unlocked === 'boolean' ? pObj.max_context_unlocked : DEFAULT_PRESET_PARAMS.max_context_unlocked,
+          wi_format: typeof pObj.wi_format === 'string' ? pObj.wi_format : DEFAULT_PRESET_PARAMS.wi_format,
+          scenario_format: typeof pObj.scenario_format === 'string' ? pObj.scenario_format : DEFAULT_PRESET_PARAMS.scenario_format,
+          personality_format: typeof pObj.personality_format === 'string' ? pObj.personality_format : DEFAULT_PRESET_PARAMS.personality_format,
+          group_nudge_prompt: typeof pObj.group_nudge_prompt === 'string' ? pObj.group_nudge_prompt : DEFAULT_PRESET_PARAMS.group_nudge_prompt,
+          stream_openai: typeof pObj.stream_openai === 'boolean' ? pObj.stream_openai : DEFAULT_PRESET_PARAMS.stream_openai,
+          prompts
+        };
+
+        const newProj: Project = {
+          id: 'proj-' + generateRandomId(),
+          name: presetName,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          preset: mergedPreset,
+          regexes,
+        };
+        setProjects(prev => [newProj, ...prev]);
+        setActiveProjectId(newProj.id);
+        addToast(`Đã tạo dự án "${presetName}" từ file nhập!`, 'success');
+      } else if (isRegex) {
+        // Create project with default preset + single regex
+        const r = pObj;
+        const parsedRegex: RegexScript = {
+          id: String(r.id || 'reg-' + generateRandomId()),
+          scriptName: String(r.scriptName || "Regex Script"),
+          findRegex: String(r.findRegex || ""),
+          replaceString: String(r.replaceString || ""),
+          trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+          placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+          disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+          markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+          promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+          runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+          substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+          minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+          maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+        };
+        const newProj: Project = {
+          id: 'proj-' + generateRandomId(),
+          name: presetName,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          preset: { ...DEFAULT_PRESET_PARAMS, prompts: [...INITIAL_PROMPTS] },
+          regexes: [parsedRegex],
+        };
+        setProjects(prev => [newProj, ...prev]);
+        setActiveProjectId(newProj.id);
+        addToast(`Đã tạo dự án "${presetName}" với Regex từ file!`, 'success');
+      } else if (isRegexArray) {
+        const arr = fileData as Record<string, unknown>[];
+        const regexes: RegexScript[] = arr.map((r) => ({
+          id: String(r.id || 'reg-' + generateRandomId()),
+          scriptName: String(r.scriptName || "Regex Script"),
+          findRegex: String(r.findRegex || ""),
+          replaceString: String(r.replaceString || ""),
+          trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+          placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+          disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+          markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+          promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+          runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+          substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+          minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+          maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+        }));
+        const newProj: Project = {
+          id: 'proj-' + generateRandomId(),
+          name: presetName,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          preset: { ...DEFAULT_PRESET_PARAMS, prompts: [...INITIAL_PROMPTS] },
+          regexes,
+        };
+        setProjects(prev => [newProj, ...prev]);
+        setActiveProjectId(newProj.id);
+        addToast(`Đã tạo dự án "${presetName}" với ${regexes.length} Regex Scripts!`, 'success');
+      } else {
+        addToast("Không nhận diện được định dạng file. Hãy chọn file Preset hoặc Regex hợp lệ.", "error");
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Cấu trúc JSON không hợp lệ";
+      addToast(`Nhập thất bại: ${errMsg}`, "error");
+    }
+  };
+
   const deleteProject = (id: string) => {
     if (projects.length <= 1) {
       addToast("Không thể xóa dự án duy nhất còn lại!", "warning");
@@ -542,6 +714,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       removeToast,
       
       createNewProject,
+      importProjectFromFile,
       deleteProject,
       updateProjectName,
       

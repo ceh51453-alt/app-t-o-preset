@@ -3,7 +3,7 @@ import { useApp } from '../storeContext';
 import { callAI } from '../utils/ai';
 import { extractJSONsFromText, ExtractedJSON } from '../utils/parser';
 import { PromptBlock, RegexScript, ChatMessage } from '../types';
-import { Send, RefreshCw, Sparkles, Plus, Calendar, Code } from 'lucide-react';
+import { Send, RefreshCw, Sparkles, Plus, Calendar, Code, Paperclip, X, FileJson } from 'lucide-react';
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
@@ -58,8 +58,57 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ onOpenSettings }) => {
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [streamingText, setStreamingText] = useState('');
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string; summary: string } | null>(null);
+  
+  const templateFileRef = useRef<HTMLInputElement>(null);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Handle preset file attachment for AI reference
+  const handleAttachFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.json')) {
+      addToast("Chỉ hỗ trợ file .json!", "error");
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const content = ev.target?.result as string;
+        const parsed = JSON.parse(content);
+        
+        // Build a summary for display
+        let summary = '';
+        if (parsed.prompts && Array.isArray(parsed.prompts)) {
+          summary = `Preset (${parsed.prompts.length} prompt blocks)`;
+        } else if (parsed.findRegex) {
+          summary = `Regex: ${parsed.scriptName || 'Script'}`;
+        } else if (Array.isArray(parsed)) {
+          summary = `Mảng ${parsed.length} phần tử`;
+        } else {
+          summary = `JSON object (${Object.keys(parsed).length} keys)`;
+        }
+
+        setAttachedFile({
+          name: file.name,
+          content: JSON.stringify(parsed, null, 2),
+          summary,
+        });
+        addToast(`Đã đính kèm "${file.name}" làm mẫu cho AI`, "success");
+      } catch {
+        addToast(`File "${file.name}" không phải JSON hợp lệ!`, "error");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleRemoveAttachment = () => {
+    setAttachedFile(null);
+  };
 
   // Auto-scroll chat
   useEffect(() => {
@@ -76,7 +125,22 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ onOpenSettings }) => {
       return;
     }
 
-    const userText = textToSend;
+    // If a file is attached, prepend it as context
+    let userText = textToSend;
+    let displayText = textToSend;
+    if (attachedFile) {
+      userText = `[FILE PRESET MẪU ĐÍNH KÈM — "${attachedFile.name}"]
+Dưới đây là nội dung file preset/regex mẫu mà người dùng muốn bạn tham khảo, phân tích hoặc cải tiến:
+\`\`\`json
+${attachedFile.content}
+\`\`\`
+
+Yêu cầu của người dùng:
+${textToSend}`;
+      displayText = `📎 [Đính kèm: ${attachedFile.name}]\n\n${textToSend}`;
+      setAttachedFile(null);
+    }
+
     setInput('');
     setIsSending(true);
     setStreamingText('');
@@ -84,7 +148,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ onOpenSettings }) => {
     // 1. Add user message
     addChatMessage({
       role: 'user',
-      content: userText
+      content: displayText
     });
 
     try {
@@ -310,6 +374,24 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ onOpenSettings }) => {
         <div ref={chatEndRef} />
       </div>
 
+      {/* Attached file indicator */}
+      {attachedFile && (
+        <div className="px-4 py-2 border-t border-theme-border bg-emerald-500/[0.05] flex items-center gap-2 animate-fade-in">
+          <FileJson size={14} className="text-emerald-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="block text-[11px] font-bold text-emerald-300 truncate">{attachedFile.name}</span>
+            <span className="block text-[9px] text-gray-500">{attachedFile.summary} — sẽ gửi làm mẫu cho AI</span>
+          </div>
+          <button
+            onClick={handleRemoveAttachment}
+            className="p-1 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition flex-shrink-0"
+            title="Gỡ đính kèm"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       {/* Quick Action buttons above Input */}
       <div className="px-4 py-2 border-t border-theme-border bg-gray-950/20 flex flex-wrap items-center gap-2">
         <button
@@ -333,6 +415,23 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ onOpenSettings }) => {
           <Calendar size={12} />
           📋 Mẫu lịch trình
         </button>
+        
+        {/* File attach button */}
+        <button
+          onClick={() => templateFileRef.current?.click()}
+          className="flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 font-bold text-[10px] px-2.5 py-1.5 rounded-lg transition ml-auto"
+          title="Đính kèm file preset làm mẫu cho AI"
+        >
+          <Paperclip size={12} />
+          📎 Đính kèm mẫu
+        </button>
+        <input
+          ref={templateFileRef}
+          type="file"
+          accept=".json"
+          onChange={handleAttachFile}
+          className="hidden"
+        />
       </div>
 
       {/* Input container footer */}

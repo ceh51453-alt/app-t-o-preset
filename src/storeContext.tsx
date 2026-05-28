@@ -20,6 +20,7 @@ export interface AppContextType {
   removeToast: (id: string) => void;
   
   createNewProject: (name: string) => Project;
+  importProjectFromFile: (fileData: unknown, fileName: string) => void;
   deleteProject: (id: string) => void;
   updateProjectName: (id: string, name: string) => void;
   

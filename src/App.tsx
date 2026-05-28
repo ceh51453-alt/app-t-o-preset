@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useApp } from './storeContext';
 import { ChatWindow } from './components/ChatWindow';
 import { SettingsModal } from './components/SettingsModal';
@@ -15,7 +15,8 @@ import {
   FileText, 
   FolderOpen,
   Menu,
-  X
+  X,
+  Upload
 } from 'lucide-react';
 
 function App() {
@@ -28,10 +29,12 @@ function App() {
     removeToast,
     setActiveProjectId,
     createNewProject,
+    importProjectFromFile,
     deleteProject,
     setActiveStep,
     setAppMode,
-    updateProjectName
+    updateProjectName,
+    addToast
   } = useApp();
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -39,6 +42,7 @@ function App() {
   const [editingProjId, setEditingProjId] = useState<string | null>(null);
   const [editProjName, setEditProjName] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   // Dynamic Accent colors based on current mode
   const accentColor = appMode === 'preset' ? 'purple' : 'cyan';
@@ -48,6 +52,28 @@ function App() {
     if (!newProjName.trim()) return;
     createNewProject(newProjName.trim());
     setNewProjName('');
+  };
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.json')) {
+      addToast("Chỉ hỗ trợ file .json!", "error");
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const content = ev.target?.result as string;
+        const parsed = JSON.parse(content);
+        importProjectFromFile(parsed, file.name);
+      } catch {
+        addToast(`File "${file.name}" không phải JSON hợp lệ!`, "error");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleStartRename = (id: string, name: string) => {
@@ -149,6 +175,21 @@ function App() {
               >
                 <FolderPlus size={14} />
               </button>
+              <button
+                type="button"
+                onClick={() => importFileRef.current?.click()}
+                className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition"
+                title="Nhập dự án từ file JSON"
+              >
+                <Upload size={14} />
+              </button>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".json"
+                onChange={handleImportFile}
+                className="hidden"
+              />
             </div>
           </form>
 
