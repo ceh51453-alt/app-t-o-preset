@@ -1,0 +1,364 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { useApp } from '../storeContext';
+import { callAI } from '../utils/ai';
+import { extractJSONsFromText, ExtractedJSON } from '../utils/parser';
+import { PromptBlock, RegexScript, ChatMessage } from '../types';
+import { Send, RefreshCw, Sparkles, Plus, Calendar, Code } from 'lucide-react';
+
+const EMPTY_MESSAGES: ChatMessage[] = [];
+
+const generateRandomId = () => {
+  return 'p-ai-' + Math.floor(Math.random() * 1000000).toString(36);
+};
+
+const SCHEDULE_TEMPLATE = `Thêm vào preset một prompt block có nội dung sau (đặt tên "🗓 Lịch trình 7 ngày"):
+
+<Quy tắc lịch trình>
+[CHỈ THỊ]: Ngay sau vùng <content>, AI BẮT BUỘC xuất ra lịch trình 7 ngày liên tiếp
+dưới dạng <details> collapsible widget.
+
+Định dạng:
+<details>
+<summary>[✰] Lịch trình của {{user}}</summary>
+<calendar_widget>
+Date: DD/MM|Thứ X
+Event: type|title|description|time|location|npc_action
+</calendar_widget>
+</details>
+
+Quy tắc:
+- type: world | major | {{user}} | character
+- Mỗi ngày 2–5 sự kiện, tổng 15–30 events
+- description: góc nhìn chủ quan {{user}}, ≥30 từ  
+- npc_action: hành động độc lập NPC, ≥30 từ
+</Quy tắc lịch trình>
+
+Đồng thời tạo kèm một Regex Script JSON để làm đẹp <calendar_widget> thành HTML widget
+có date scroller, event cards có thể expand, màu phân loại theo type.`;
+
+interface ChatWindowProps {
+  onOpenSettings: () => void;
+}
+
+export const ChatWindow: React.FC<ChatWindowProps> = ({ onOpenSettings }) => {
+  const { 
+    chatHistory, 
+    addChatMessage, 
+    activeProjectId, 
+    settings, 
+    appMode,
+    importFullPreset,
+    addPromptBlock,
+    addRegexScript,
+    addToast
+  } = useApp();
+
+  const activeMessages = chatHistory[activeProjectId] || EMPTY_MESSAGES;
+
+  const [input, setInput] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+  
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [activeMessages, streamingText]);
+
+  const handleSend = async (textToSend: string = input) => {
+    if (!textToSend.trim() || isSending) return;
+    
+    // Check if key is available
+    if (!settings.useProxy && !settings.apiKey) {
+      addToast("Chưa nhập API key. Vào ⚙ Cài đặt.", "error");
+      onOpenSettings();
+      return;
+    }
+
+    const userText = textToSend;
+    setInput('');
+    setIsSending(true);
+    setStreamingText('');
+
+    // 1. Add user message
+    addChatMessage({
+      role: 'user',
+      content: userText
+    });
+
+    try {
+      // 2. Call API (Direct or Proxy)
+      const reply = await callAI(userText, activeMessages, settings, appMode);
+      
+      // 3. Extract JSONs from reply
+      const extracted = extractJSONsFromText(reply);
+
+      // 4. Simulate streaming effect (typewriter)
+      let currentText = '';
+      const chars = reply.split('');
+      const chunkSize = Math.max(1, Math.floor(chars.length / 50)); // Simulating speeds
+      
+      for (let i = 0; i < chars.length; i += chunkSize) {
+        currentText += chars.slice(i, i + chunkSize).join('');
+        setStreamingText(currentText);
+        await new Promise(resolve => setTimeout(resolve, 15));
+      }
+      
+      setStreamingText('');
+
+      // 5. Add AI Response with parsed data
+      addChatMessage({
+        role: 'assistant',
+        content: reply,
+        extractedJSONs: extracted
+      });
+      
+      if (extracted.length > 0) {
+        addToast(`Đã tìm thấy ${extracted.length} khối JSON trong phản hồi!`, "success");
+      }
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : 'Không thể liên lạc với mô hình AI.';
+      addChatMessage({
+        role: 'system',
+        content: `❌ Gặp sự cố kết nối: ${errMsg}`
+      });
+      addToast(errMsg, "error");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handlePrefill = (type: 'preset' | 'regex' | 'schedule') => {
+    if (type === 'preset') {
+      setInput("Tạo SillyTavern preset tiếng Việt cho roleplay, tối ưu Gemini, với ");
+    } else if (type === 'regex') {
+      setInput("Tạo SillyTavern regex script để ");
+    } else if (type === 'schedule') {
+      setInput(prev => prev + (prev ? '\n\n' : '') + SCHEDULE_TEMPLATE);
+    }
+  };
+
+  const handleImportExtracted = (item: ExtractedJSON) => {
+    if (item.type === 'preset') {
+      if (confirm(`Bạn muốn ghi đè Preset của dự án bằng Preset "${item.name}" vừa tạo chứ?`)) {
+        importFullPreset(item.data);
+      }
+    } else if (item.type === 'prompt') {
+      const block = item.data as Partial<PromptBlock>;
+      addPromptBlock({
+        name: block.name || "Prompt Block AI",
+        identifier: block.identifier || generateRandomId(),
+        role: block.role || 'system',
+        system_prompt: block.system_prompt !== undefined ? block.system_prompt : true,
+        content: block.content || "",
+        enabled: block.enabled !== undefined ? block.enabled : true,
+        injection_position: block.injection_position || 0,
+        injection_depth: block.injection_depth || 4,
+        injection_order: block.injection_order || 100,
+        forbid_overrides: block.forbid_overrides || false
+      });
+    } else if (item.type === 'prompts') {
+      const blocks = (Array.isArray(item.data) ? item.data : []) as Partial<PromptBlock>[];
+      blocks.forEach((block) => {
+        addPromptBlock({
+          name: block.name || "Prompt Block AI",
+          identifier: block.identifier || generateRandomId(),
+          role: block.role || 'system',
+          system_prompt: block.system_prompt !== undefined ? block.system_prompt : true,
+          content: block.content || "",
+          enabled: block.enabled !== undefined ? block.enabled : true,
+          injection_position: block.injection_position || 0,
+          injection_depth: block.injection_depth || 4,
+          injection_order: block.injection_order || 100,
+          forbid_overrides: block.forbid_overrides || false
+        });
+      });
+      addToast(`Đã thêm ${blocks.length} prompt blocks vào Preset!`, "success");
+    } else if (item.type === 'regex') {
+      const data = (item.data || {}) as Partial<RegexScript>;
+      addRegexScript({
+        scriptName: data.scriptName || "Regex Script AI",
+        findRegex: data.findRegex || "",
+        replaceString: data.replaceString || "",
+        trimStrings: data.trimStrings || [],
+        placement: data.placement || [1, 2],
+        disabled: data.disabled !== undefined ? data.disabled : false,
+        markdownOnly: data.markdownOnly !== undefined ? data.markdownOnly : false,
+        promptOnly: data.promptOnly !== undefined ? data.promptOnly : false,
+        runOnEdit: data.runOnEdit !== undefined ? data.runOnEdit : true,
+        substituteRegex: data.substituteRegex !== undefined ? data.substituteRegex : 0,
+        minDepth: data.minDepth !== undefined ? data.minDepth : null,
+        maxDepth: data.maxDepth !== undefined ? data.maxDepth : null,
+        id: data.id
+      });
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-theme-bg">
+      
+      {/* Chats Container */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+        {activeMessages.length === 0 && !streamingText && (
+          <div className="h-full flex flex-col items-center justify-center text-center max-w-lg mx-auto space-y-6">
+            <div className="p-4 bg-purple-500/10 rounded-full border border-purple-500/20 text-purple-400 animate-pulse">
+              <Sparkles size={32} />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-bold text-gray-200">Trợ Lý Kịch Bản ST Studio</h2>
+              <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                Chào mừng bạn đến với **ST Studio**! Hãy trò chuyện để hướng dẫn AI xây dựng và tinh chỉnh SillyTavern Preset, Prompt Blocks, hoặc Regex Scripts của bạn.
+              </p>
+            </div>
+            
+            {/* Quick buttons starting help */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full pt-4">
+              <button
+                onClick={() => handlePrefill('preset')}
+                className="flex items-center justify-center gap-2 p-3 bg-gray-900 border border-theme-border hover:border-purple-500/40 rounded-xl text-xs text-gray-300 transition text-left"
+              >
+                <Code size={14} className="text-purple-400" />
+                <span>Thiết lập Preset Roleplay</span>
+              </button>
+              <button
+                onClick={() => handlePrefill('regex')}
+                className="flex items-center justify-center gap-2 p-3 bg-gray-900 border border-theme-border hover:border-cyan-500/40 rounded-xl text-xs text-gray-300 transition text-left"
+              >
+                <RefreshCw size={14} className="text-cyan-400" />
+                <span>Xây dựng Regex Script</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Message items list */}
+        {activeMessages.map((msg) => (
+          <div 
+            key={msg.id}
+            className={`flex flex-col ${
+              msg.role === 'user' ? 'items-end' : 'items-start'
+            } space-y-1 animate-fade-in`}
+          >
+            {/* Sender Label */}
+            <span className="text-[10px] text-gray-500 font-bold px-1 uppercase tracking-wider font-mono">
+              {msg.role === 'user' ? 'Khách hàng' : msg.role === 'system' ? '⚠️ Hệ Thống' : '🔮 ST Studio'}
+            </span>
+
+            {/* Bubble content */}
+            <div 
+              className={`max-w-[85%] rounded-2xl px-4 py-3 text-xs sm:text-sm leading-relaxed ${
+                msg.role === 'user'
+                  ? 'bg-purple-600 text-white rounded-tr-sm shadow-md shadow-purple-500/10'
+                  : msg.role === 'system'
+                    ? 'bg-red-500/15 border border-red-500/30 text-red-300 rounded-tl-sm'
+                    : 'bg-theme-panel border border-theme-border/60 text-gray-200 rounded-tl-sm shadow-sm'
+              }`}
+            >
+              <div className="whitespace-pre-wrap select-text font-sans">
+                {msg.content}
+              </div>
+
+              {/* Parsed actions attachments */}
+              {msg.extractedJSONs && msg.extractedJSONs.length > 0 && (
+                <div className="mt-3.5 pt-3 border-t border-theme-border/40 space-y-2">
+                  <span className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest font-mono">
+                    📥 TÍCH HỢP TRÍCH XUẤT NHANH:
+                  </span>
+                  <div className="flex flex-col gap-1.5">
+                    {msg.extractedJSONs.map((item, idx) => (
+                      <div 
+                        key={idx}
+                        className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-2.5 bg-gray-950/40 rounded-xl border border-theme-border/50 gap-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Code size={14} className={item.type === 'regex' ? 'text-cyan-400' : 'text-purple-400'} />
+                          <div className="text-left">
+                            <span className="block text-[11px] font-bold text-gray-300 truncate max-w-[200px] sm:max-w-xs">{item.name}</span>
+                            <span className="block text-[9px] text-gray-500 uppercase font-mono font-bold">
+                              Phân loại: {item.type === 'preset' ? 'Preset ST' : item.type === 'regex' ? 'Regex Script' : 'Prompt Block(s)'}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        <button
+                          onClick={() => handleImportExtracted(item)}
+                          className="flex items-center gap-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 font-bold text-[10px] px-3 py-1.5 rounded-lg border border-purple-500/30 transition self-end sm:self-auto"
+                        >
+                          <Plus size={10} />
+                          {item.type === 'preset' ? 'Nạp Đè Preset' : 'Nhập Vào Dự Án'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* Streaming Placeholder */}
+        {streamingText && (
+          <div className="flex flex-col items-start space-y-1 animate-pulse">
+            <span className="text-[10px] text-gray-500 font-bold px-1 uppercase tracking-wider font-mono">🔮 ST Studio (Đang viết)</span>
+            <div className="max-w-[85%] rounded-2xl rounded-tl-sm px-4 py-3 bg-theme-panel border border-theme-border text-gray-200 text-xs sm:text-sm whitespace-pre-wrap leading-relaxed select-text">
+              {streamingText}
+            </div>
+          </div>
+        )}
+
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* Quick Action buttons above Input */}
+      <div className="px-4 py-2 border-t border-theme-border bg-gray-950/20 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => handlePrefill('preset')}
+          className="flex items-center gap-1 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 font-bold text-[10px] px-2.5 py-1.5 rounded-lg transition"
+        >
+          <Code size={12} />
+          📄 Tạo Preset
+        </button>
+        <button
+          onClick={() => handlePrefill('regex')}
+          className="flex items-center gap-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20 font-bold text-[10px] px-2.5 py-1.5 rounded-lg transition"
+        >
+          <RefreshCw size={12} />
+          🔍 Tạo Regex
+        </button>
+        <button
+          onClick={() => handlePrefill('schedule')}
+          className="flex items-center gap-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-300 border border-yellow-500/20 font-bold text-[10px] px-2.5 py-1.5 rounded-lg transition"
+        >
+          <Calendar size={12} />
+          📋 Mẫu lịch trình
+        </button>
+      </div>
+
+      {/* Input container footer */}
+      <div className="p-4 bg-gray-950/40 border-t border-theme-border flex gap-2">
+        <textarea
+          rows={1}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSend();
+            }
+          }}
+          placeholder="Mô tả cấu hình hoặc yêu cầu chỉnh sửa prompt/regex..."
+          className="flex-1 bg-gray-900 border border-theme-border rounded-xl px-4 py-3 text-xs sm:text-sm text-gray-200 focus:outline-none focus:border-purple-400 placeholder-gray-500 resize-none max-h-24 font-sans"
+        />
+        <button
+          onClick={() => handleSend()}
+          disabled={isSending || !input.trim()}
+          className="flex items-center justify-center p-3 bg-purple-500 hover:bg-purple-600 active:bg-purple-700 disabled:bg-gray-800 disabled:text-gray-500 text-white rounded-xl transition shadow-md shadow-purple-500/10 self-end"
+        >
+          <Send size={16} />
+        </button>
+      </div>
+
+    </div>
+  );
+};
