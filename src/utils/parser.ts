@@ -13,6 +13,7 @@ export function extractJSONsFromText(text: string): ExtractedJSON[] {
   if (!text) return results;
 
   // 1. Try to find JSON blocks using markdown code fences
+  //    Use a greedy approach: find ```json then capture until the next ``` that is NOT inside the JSON
   const markdownRegex = /```json\s*([\s\S]*?)```/g;
   let match;
   let index = 1;
@@ -23,31 +24,90 @@ export function extractJSONsFromText(text: string): ExtractedJSON[] {
       const parsed = JSON.parse(jsonStr);
       results.push(classifyAndBuildJSON(parsed, index++));
     } catch {
-      console.warn("Failed to parse marked markdown JSON");
+      // If the simple match failed, try to find balanced JSON within the captured block
+      const balanced = extractBalancedJSON(jsonStr);
+      for (const bJson of balanced) {
+        try {
+          const parsed = JSON.parse(bJson);
+          results.push(classifyAndBuildJSON(parsed, index++));
+        } catch {
+          // skip
+        }
+      }
     }
   }
 
-  // 2. Fallback: If no markdown fences succeeded, try to search for curly brackets if no blocks found
-  if (results.length === 0) {
-    const bracketRegex = /(\{[\s\S]*?\})/g;
+  // 2. Fallback: If no code fences found, use bracket-counting to find top-level JSON objects/arrays
+  if (results.length === 0 && (text.includes('{') || text.includes('['))) {
+    const balanced = extractBalancedJSON(text);
     let fallbackIndex = 1;
-    let bMatch;
-    
-    // We only try this if the text contains a potential JSON but lacks code blocks
-    if (text.includes('{') && text.includes('}')) {
-      while ((bMatch = bracketRegex.exec(text)) !== null) {
-        const potentialJson = bMatch[1].trim();
-        // Skip extremely small strings or non-JSON looking matches
-        if (potentialJson.length < 20) continue;
-        try {
-          const parsed = JSON.parse(potentialJson);
-          results.push(classifyAndBuildJSON(parsed, fallbackIndex++));
-          // If we successfully parse a substantial JSON block, stop to prevent duplicates
-          if (results.length >= 3) break;
-        } catch {
-          // Ignore parse errors for fragments
+    for (const bJson of balanced) {
+      if (bJson.length < 20) continue;
+      try {
+        const parsed = JSON.parse(bJson);
+        results.push(classifyAndBuildJSON(parsed, fallbackIndex++));
+        if (results.length >= 3) break;
+      } catch {
+        // skip
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Extract balanced JSON objects/arrays from text using bracket counting.
+ * Properly handles nested {} and [] inside JSON string values (e.g., CSS inside replaceString).
+ */
+function extractBalancedJSON(text: string): string[] {
+  const results: string[] = [];
+  let i = 0;
+
+  while (i < text.length) {
+    // Find the start of a JSON object or array
+    if (text[i] === '{' || text[i] === '[') {
+      let depth = 1;
+      let j = i + 1;
+      let inString = false;
+      let escape = false;
+
+      while (j < text.length && depth > 0) {
+        const ch = text[j];
+
+        if (escape) {
+          escape = false;
+          j++;
+          continue;
+        }
+
+        if (ch === '\\' && inString) {
+          escape = true;
+          j++;
+          continue;
+        }
+
+        if (ch === '"' && !escape) {
+          inString = !inString;
+        } else if (!inString) {
+          if (ch === '{' || ch === '[') depth++;
+          else if (ch === '}' || ch === ']') depth--;
+        }
+
+        j++;
+      }
+
+      if (depth === 0) {
+        const candidate = text.substring(i, j);
+        // Only consider substantial candidates that look like JSON
+        if (candidate.length >= 20 && (candidate.includes('"') || candidate.includes(':'))) {
+          results.push(candidate);
         }
       }
+
+      i = j;
+    } else {
+      i++;
     }
   }
 

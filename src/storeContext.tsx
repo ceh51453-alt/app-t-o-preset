@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { Project, APISettings, ChatMessage, WorkspaceStep, AppMode, SillyTavernPreset, PromptBlock, RegexScript, ToastMessage } from './types';
+import { Project, APISettings, ChatMessage, WorkspaceStep, AppMode, SillyTavernPreset, PromptBlock, RegexScript, ToastMessage, ActionLogEntry } from './types';
 
 export interface AppContextType {
   projects: Project[];
@@ -38,6 +38,8 @@ export interface AppContextType {
   clearChatHistory: () => void;
   importFullPreset: (preset: unknown) => void;
   importRegexScript: (regex: unknown) => void;
+
+  getActionLog: () => ActionLogEntry[];
 }
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);

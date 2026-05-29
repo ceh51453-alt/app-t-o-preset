@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useApp } from '../storeContext';
 import { highlightJSON } from '../utils/parser';
+import { SillyTavernPreset } from '../types';
 import { Copy, Download, Check, FileCode, AlertTriangle, Upload, FileUp, Eye, ArrowDownToLine, X } from 'lucide-react';
 
 type ImportedFileData = {
@@ -240,7 +241,7 @@ export const StepExport: React.FC = () => {
         if (key in pObj) paramUpdates[key] = pObj[key];
       });
       if (Object.keys(paramUpdates).length > 0) {
-        updatePresetParams(paramUpdates as any);
+        updatePresetParams(paramUpdates as Partial<SillyTavernPreset>);
       }
 
       addToast(`Đã thêm ${addedPrompts} prompt blocks${addedRegexes > 0 ? ` và ${addedRegexes} regex scripts` : ''} vào dự án!`, 'success');

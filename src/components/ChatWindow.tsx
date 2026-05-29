@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../storeContext';
 import { callAI } from '../utils/ai';
 import { extractJSONsFromText, ExtractedJSON } from '../utils/parser';
+import { buildProjectContext, resolveReferences, buildReferencedContext } from '../utils/contextBuilder';
 import { PromptBlock, RegexScript, ChatMessage } from '../types';
 import { Send, RefreshCw, Sparkles, Plus, Calendar, Code, Paperclip, X, FileJson } from 'lucide-react';
 
@@ -44,13 +45,14 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ onOpenSettings }) => {
   const { 
     chatHistory, 
     addChatMessage, 
-    activeProjectId, 
+    activeProjectId,
+    activeProject,
     settings, 
-    appMode,
     importFullPreset,
     addPromptBlock,
     addRegexScript,
-    addToast
+    addToast,
+    getActionLog,
   } = useApp();
 
   const activeMessages = chatHistory[activeProjectId] || EMPTY_MESSAGES;
@@ -152,8 +154,14 @@ ${textToSend}`;
     });
 
     try {
-      // 2. Call API (Direct or Proxy)
-      const reply = await callAI(userText, activeMessages, settings, appMode);
+      // 2. Build RAG context
+      const actionLog = getActionLog();
+      const projectContext = buildProjectContext(activeProject, actionLog);
+      const refs = resolveReferences(userText, activeProject, actionLog);
+      const referencedContext = buildReferencedContext(refs);
+
+      // 3. Call API with full context
+      const reply = await callAI(userText, activeMessages, settings, projectContext, referencedContext);
       
       // 3. Extract JSONs from reply
       const extracted = extractJSONsFromText(reply);

@@ -66,7 +66,7 @@ export interface ChatMessage {
   isLoading?: boolean;
   extractedJSONs?: {
     type: 'preset' | 'prompt' | 'prompts' | 'regex' | 'unknown';
-    data: any;
+    data: unknown;
     name: string;
   }[];
 }
@@ -100,4 +100,22 @@ export interface ToastMessage {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
   text: string;
+}
+
+export type ActionType =
+  | 'prompt_added'
+  | 'prompt_updated'
+  | 'prompt_deleted'
+  | 'regex_added'
+  | 'regex_updated'
+  | 'regex_deleted'
+  | 'params_updated';
+
+export interface ActionLogEntry {
+  id: string;
+  type: ActionType;
+  timestamp: number;
+  itemName: string;
+  itemId: string;
+  details?: string;
 }

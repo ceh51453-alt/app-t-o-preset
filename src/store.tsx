@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Project, APISettings, ChatMessage, WorkspaceStep, AppMode, SillyTavernPreset, PromptBlock, RegexScript, ToastMessage } from './types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Project, APISettings, ChatMessage, WorkspaceStep, AppMode, SillyTavernPreset, PromptBlock, RegexScript, ToastMessage, ActionLogEntry, ActionType } from './types';
 import { AppContext } from './storeContext';
 
 // Static helper to generate unique IDs securely outside render
@@ -144,6 +144,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : {};
   });
 
+  const [actionLog, setActionLog] = useState<Record<string, ActionLogEntry[]>>(() => {
+    const saved = localStorage.getItem('st_studio_action_log');
+    return saved ? JSON.parse(saved) : {};
+  });
+
   const [activeStep, setActiveStep] = useState<WorkspaceStep>('parameters');
   const [appMode, setAppMode] = useState<AppMode>('preset');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -174,7 +179,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => clearTimeout(handler);
   }, [chatHistory]);
 
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      localStorage.setItem('st_studio_action_log', JSON.stringify(actionLog));
+    }, 700);
+    return () => clearTimeout(handler);
+  }, [actionLog]);
+
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || DEFAULT_PROJECTS[0];
+
+  // ── Action Log System ──
+  const MAX_ACTION_LOG = 20;
+
+  const logAction = useCallback((type: ActionType, itemName: string, itemId: string, details?: string) => {
+    const entry: ActionLogEntry = {
+      id: generateRandomId(),
+      type,
+      timestamp: Date.now(),
+      itemName,
+      itemId,
+      details
+    };
+    setActionLog(prev => {
+      const current = prev[activeProjectId] || [];
+      const updated = [...current, entry].slice(-MAX_ACTION_LOG);
+      return { ...prev, [activeProjectId]: updated };
+    });
+  }, [activeProjectId]);
+
+  const getActionLog = useCallback((): ActionLogEntry[] => {
+    return actionLog[activeProjectId] || [];
+  }, [actionLog, activeProjectId]);
 
   const addToast = (text: string, type: ToastMessage['type'] = 'info') => {
     const id = generateRandomId();
@@ -409,6 +444,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Preset operations
   const updatePresetParams = (params: Partial<SillyTavernPreset>) => {
+    const changedKeys = Object.keys(params).filter(k => k !== 'prompts');
     setProjects(prev => prev.map(p => {
       if (p.id === activeProjectId) {
         return {
@@ -422,6 +458,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+    if (changedKeys.length > 0) {
+      const details = changedKeys.map(k => `${k}=${String((params as Record<string, unknown>)[k])}`).join(', ');
+      logAction('params_updated', 'Thông số preset', 'params', details);
+    }
   };
 
   const addPromptBlock = (prompt: Omit<PromptBlock, 'identifier'> & { identifier?: string }) => {
@@ -446,6 +486,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+    logAction('prompt_added', prompt.name, id, prompt.content?.substring(0, 100));
     addToast(`Đã thêm prompt block "${prompt.name}"`, 'success');
   };
 
@@ -469,9 +510,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+    const changedFields = Object.keys(updated).join(', ');
+    logAction('prompt_updated', updated.name || identifier, identifier, `Sửa: ${changedFields}`);
   };
 
   const deletePromptBlock = (identifier: string) => {
+    const deletedPrompt = activeProject.preset.prompts.find(p => p.identifier === identifier);
     setProjects(prev => prev.map(p => {
       if (p.id === activeProjectId) {
         const prompts = p.preset.prompts.filter(pr => pr.identifier !== identifier);
@@ -486,6 +530,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+    logAction('prompt_deleted', deletedPrompt?.name || identifier, identifier);
     addToast("Đã xóa prompt block.", "info");
   };
 
@@ -532,6 +577,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+    logAction('regex_added', regex.scriptName, id, `pattern: ${regex.findRegex}`);
     addToast(`Đã thêm Regex Script "${regex.scriptName}"`, 'success');
   };
 
@@ -552,9 +598,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+    const changedFields = Object.keys(updated).join(', ');
+    logAction('regex_updated', updated.scriptName || id, id, `Sửa: ${changedFields}`);
   };
 
   const deleteRegexScript = (id: string) => {
+    const deletedRegex = activeProject.regexes.find(r => r.id === id);
     setProjects(prev => prev.map(p => {
       if (p.id === activeProjectId) {
         const regexes = p.regexes.filter(r => r.id !== id);
@@ -566,6 +615,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+    logAction('regex_deleted', deletedRegex?.scriptName || id, id);
     addToast("Đã xóa Regex Script.", "info");
   };
 
@@ -734,7 +784,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addChatMessage,
       clearChatHistory,
       importFullPreset,
-      importRegexScript
+      importRegexScript,
+
+      getActionLog,
     }}>
       {children}
     </AppContext.Provider>

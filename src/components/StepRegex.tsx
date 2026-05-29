@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useApp } from '../storeContext';
 import { RegexScript } from '../types';
-import { Plus, Trash2, Edit3, Save, Eye, EyeOff } from 'lucide-react';
+import { Plus, Trash2, Edit3, Save, Eye, EyeOff, FileUp, Code, Upload, X } from 'lucide-react';
 
 export const StepRegex: React.FC = () => {
   const { 
@@ -95,25 +95,220 @@ export const StepRegex: React.FC = () => {
     }
   };
 
+  // ── JSON Import Logic ──
+  const [showImport, setShowImport] = useState(false);
+  const [importJSON, setImportJSON] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const parseAndImportRegex = useCallback((jsonStr: string) => {
+    try {
+      const parsed = JSON.parse(jsonStr);
+
+      // Array of regex scripts
+      if (Array.isArray(parsed)) {
+        let count = 0;
+        parsed.forEach((item: unknown) => {
+          if (item && typeof item === 'object' && 'findRegex' in (item as Record<string, unknown>)) {
+            const r = item as Record<string, unknown>;
+            addRegexScript({
+              scriptName: String(r.scriptName || 'Regex Script'),
+              findRegex: String(r.findRegex || ''),
+              replaceString: String(r.replaceString || ''),
+              trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+              placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+              disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+              markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+              promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+              runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+              substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+              minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+              maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+              id: String(r.id || undefined),
+            });
+            count++;
+          }
+        });
+        if (count > 0) {
+          addToast(`Đã nhập ${count} Regex Scripts thành công!`, 'success');
+          setImportJSON('');
+          setShowImport(false);
+        } else {
+          addToast('Không tìm thấy Regex Script hợp lệ trong mảng.', 'error');
+        }
+        return;
+      }
+
+      // Single regex script
+      if (parsed && typeof parsed === 'object' && ('findRegex' in parsed || 'scriptName' in parsed)) {
+        const r = parsed as Record<string, unknown>;
+        addRegexScript({
+          scriptName: String(r.scriptName || 'Regex Script'),
+          findRegex: String(r.findRegex || ''),
+          replaceString: String(r.replaceString || ''),
+          trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map(String) : [],
+          placement: Array.isArray(r.placement) ? r.placement.filter((v): v is number => typeof v === 'number') : [2],
+          disabled: typeof r.disabled === 'boolean' ? r.disabled : false,
+          markdownOnly: typeof r.markdownOnly === 'boolean' ? r.markdownOnly : true,
+          promptOnly: typeof r.promptOnly === 'boolean' ? r.promptOnly : false,
+          runOnEdit: typeof r.runOnEdit === 'boolean' ? r.runOnEdit : true,
+          substituteRegex: typeof r.substituteRegex === 'number' ? r.substituteRegex : 0,
+          minDepth: typeof r.minDepth === 'number' ? r.minDepth : null,
+          maxDepth: typeof r.maxDepth === 'number' ? r.maxDepth : null,
+          id: String(r.id || undefined),
+        });
+        setImportJSON('');
+        setShowImport(false);
+        return;
+      }
+
+      addToast('JSON không phải Regex Script hợp lệ (thiếu findRegex hoặc scriptName).', 'error');
+    } catch {
+      addToast('JSON không hợp lệ! Kiểm tra lại cú pháp.', 'error');
+    }
+  }, [addRegexScript, addToast]);
+
+  const handleFileImport = useCallback((file: File) => {
+    if (!file.name.endsWith('.json')) {
+      addToast('Chỉ hỗ trợ file .json!', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (content) {
+        setImportJSON(content);
+        setShowImport(true);
+        // Auto-import immediately
+        parseAndImportRegex(content);
+      }
+    };
+    reader.readAsText(file);
+  }, [addToast, parseAndImportRegex]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileImport(file);
+  }, [handleFileImport]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileImport(file);
+    e.target.value = '';
+  };
+
   return (
     <div className="space-y-6 animate-slide-up pb-10">
       
       {/* Step Header */}
-      <div className="flex justify-between items-center bg-theme-panel border border-theme-border rounded-xl p-4">
+      <div className="flex flex-wrap justify-between items-center gap-3 bg-theme-panel border border-theme-border rounded-xl p-4">
         <div>
           <h3 className="text-sm font-semibold text-cyan-400">🔍 Quản lý danh sách các Regex Scripts</h3>
           <p className="text-xs text-gray-400 mt-1">
             Dự án hiện tại chứa <span className="text-cyan-400 font-bold">{regexes.length}</span> kịch bản Regex. Bạn có thể bật/tắt hoặc yêu cầu AI thiết kế thêm các bộ lọc làm đẹp UI.
           </p>
         </div>
-        <button
-          onClick={() => setIsAdding(!isAdding)}
-          className="flex items-center gap-1.5 bg-cyan-500 hover:bg-cyan-600 active:bg-cyan-700 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition shadow-md shadow-cyan-500/10"
-        >
-          <Plus size={14} />
-          Tạo Regex mới
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowImport(!showImport)}
+            className={`flex items-center gap-1.5 font-semibold text-xs px-3.5 py-2 rounded-lg transition shadow-md ${
+              showImport
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/10'
+                : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 shadow-emerald-500/5'
+            }`}
+          >
+            <Upload size={14} />
+            Nhập JSON
+          </button>
+          <button
+            onClick={() => setIsAdding(!isAdding)}
+            className="flex items-center gap-1.5 bg-cyan-500 hover:bg-cyan-600 active:bg-cyan-700 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition shadow-md shadow-cyan-500/10"
+          >
+            <Plus size={14} />
+            Tạo Regex mới
+          </button>
+        </div>
       </div>
+
+      {/* ══ JSON IMPORT SECTION ══ */}
+      {showImport && (
+        <div className="bg-theme-panel border border-emerald-500/30 rounded-xl overflow-hidden animate-fade-in">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-theme-border bg-gray-900/40">
+            <div className="flex items-center gap-2">
+              <Code size={14} className="text-emerald-400" />
+              <span className="text-xs font-bold text-gray-200 uppercase tracking-wider">Nhập Regex Script từ JSON</span>
+            </div>
+            <button onClick={() => { setShowImport(false); setImportJSON(''); }} className="p-1.5 text-gray-500 hover:text-gray-300 hover:bg-gray-800 rounded-lg transition">
+              <X size={14} />
+            </button>
+          </div>
+          
+          <div className="p-5 space-y-4">
+            {/* File drop zone */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`cursor-pointer border-2 border-dashed rounded-xl p-5 text-center transition-all group ${
+                isDragOver
+                  ? 'border-emerald-400 bg-emerald-500/10 scale-[1.01]'
+                  : 'border-gray-700 hover:border-emerald-500/50 hover:bg-emerald-500/[0.03]'
+              }`}
+            >
+              <input ref={fileInputRef} type="file" accept=".json" onChange={handleFileSelect} className="hidden" />
+              <FileUp size={22} className={`inline-block mb-2 transition-colors ${isDragOver ? 'text-emerald-300' : 'text-gray-500 group-hover:text-emerald-400'}`} />
+              <p className={`text-xs font-bold ${isDragOver ? 'text-emerald-300' : 'text-gray-400'}`}>
+                {isDragOver ? 'Thả file JSON vào đây!' : 'Kéo thả file .json hoặc nhấp để chọn'}
+              </p>
+            </div>
+
+            {/* JSON paste textarea */}
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-gray-400">Hoặc dán JSON trực tiếp:</label>
+              <textarea
+                rows={8}
+                value={importJSON}
+                onChange={(e) => setImportJSON(e.target.value)}
+                placeholder={'Dán JSON regex script vào đây...\n\nVí dụ:\n{\n  "scriptName": "Tên Script",\n  "findRegex": "/pattern/flags",\n  "replaceString": "thay thế",\n  ...\n}'}
+                className="w-full bg-gray-950 border border-theme-border rounded-lg p-3 text-xs text-emerald-300 font-mono focus:outline-none focus:border-emerald-400 resize-y leading-relaxed"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setShowImport(false); setImportJSON(''); }}
+                className="text-xs font-semibold text-gray-400 hover:text-gray-200 px-3 py-2 rounded-lg transition"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => { if (importJSON.trim()) parseAndImportRegex(importJSON); else addToast('Chưa nhập JSON!', 'warning'); }}
+                disabled={!importJSON.trim()}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 disabled:text-gray-500 text-white font-semibold text-xs px-4 py-2 rounded-lg transition shadow-lg shadow-emerald-500/10"
+              >
+                <Upload size={13} />
+                Nhập vào Dự Án
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add New Regex Form */}
       {isAdding && (
@@ -134,13 +329,13 @@ export const StepRegex: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label htmlFor="add-r-pattern" className="block text-xs font-semibold text-gray-400">Pattern Tìm Kiếm (findRegex)</label>
-              <input
+              <textarea
                 id="add-r-pattern"
-                type="text"
+                rows={2}
                 value={newForm.findRegex}
                 onChange={(e) => setNewForm(prev => ({ ...prev, findRegex: e.target.value }))}
                 placeholder="Ví dụ: /<calendar_widget>([\s\S]*?)<\/calendar_widget>/"
-                className="w-full bg-gray-900 border border-theme-border rounded-lg px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-400"
+                className="w-full bg-gray-900 border border-theme-border rounded-lg px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-400 resize-y"
               />
             </div>
           </div>
@@ -303,14 +498,9 @@ export const StepRegex: React.FC = () => {
                     <div className="flex flex-wrap items-center gap-x-2 text-[10px] text-gray-500 mt-1 font-mono">
                       <span>ID: {r.id}</span>
                       <span>•</span>
-                      <span className="text-cyan-400">Pattern: {isEditing ? (
-                        <input
-                          type="text"
-                          value={editForm.findRegex || ''}
-                          onChange={(e) => setEditForm(prev => ({ ...prev, findRegex: e.target.value }))}
-                          className="bg-gray-900 border border-cyan-500/40 rounded px-1 text-[10px] text-cyan-300 focus:outline-none"
-                        />
-                      ) : r.findRegex}</span>
+                      <span className="text-cyan-400">Pattern: {isEditing ? '(xem bên dưới)' : (
+                        <span className="break-all">{r.findRegex}</span>
+                      )}</span>
                     </div>
                   </div>
 
@@ -406,12 +596,25 @@ export const StepRegex: React.FC = () => {
                         </label>
                       </div>
 
-                      <textarea
-                        rows={5}
-                        value={editForm.replaceString || ''}
-                        onChange={(e) => setEditForm(prev => ({ ...prev, replaceString: e.target.value }))}
-                        className="w-full bg-gray-900 border border-theme-border rounded-lg p-3 text-xs text-gray-200 font-mono focus:outline-none focus:border-cyan-400 resize-y"
-                      />
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">Pattern Tìm Kiếm (findRegex):</label>
+                        <textarea
+                          rows={3}
+                          value={editForm.findRegex || ''}
+                          onChange={(e) => setEditForm(prev => ({ ...prev, findRegex: e.target.value }))}
+                          className="w-full bg-gray-900 border border-theme-border rounded-lg p-3 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-400 resize-y"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">Chuỗi Thay Thế (replaceString):</label>
+                        <textarea
+                          rows={8}
+                          value={editForm.replaceString || ''}
+                          onChange={(e) => setEditForm(prev => ({ ...prev, replaceString: e.target.value }))}
+                          className="w-full bg-gray-900 border border-theme-border rounded-lg p-3 text-xs text-gray-200 font-mono focus:outline-none focus:border-cyan-400 resize-y"
+                        />
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-2">
